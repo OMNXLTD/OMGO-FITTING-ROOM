@@ -597,6 +597,65 @@
             font-size: 12px;
             color: var(--muted-2);
         }
+
+        /* ===== Mobile blocker ===== */
+
+        #mobile-block {
+            position: fixed;
+            inset: 0;
+            z-index: 99999;
+            display: none;
+            /* default: hidden on desktop */
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            background: var(--bg);
+            color: var(--panel-text);
+            padding: 2.5rem 1.8rem;
+        }
+
+        #mobile-block .mobile-msg {
+            max-width: 420px;
+            padding: 1.8rem 2.2rem;
+            border-radius: 14px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+        }
+
+        #mobile-block h1 {
+            margin: 0 0 0.75rem;
+            font-family: var(--font-heading);
+            font-size: 1.4rem;
+            color: var(--muted);
+        }
+
+        #mobile-block p {
+            margin: 0.25rem 0;
+            font-size: 0.95rem;
+            color: var(--muted-2);
+        }
+
+        /* When mobile block is active, hide the rest of the UI */
+        body.mobile-blocked {
+            overflow: hidden;
+        }
+
+        body.mobile-blocked #loader,
+        body.mobile-blocked #omgo-canvas,
+        body.mobile-blocked .panel,
+        body.mobile-blocked .mini,
+        body.mobile-blocked .collapse-toggle,
+        body.mobile-blocked .theme-toggle,
+        body.mobile-blocked #clickLayer {
+            display: none !important;
+        }
+
+        body.mobile-blocked #mobile-block {
+            display: flex;
+        }
     </style>
     <script type="importmap">
     {
@@ -609,6 +668,15 @@
 </head>
 
 <body>
+    <!-- Mobile-only blocker -->
+    <div id="mobile-block">
+        <div class="mobile-msg">
+            <h1>OMGO Fitting Room</h1>
+            <p>This tool is designed for a laptop or desktop browser.</p>
+            <p>Please open this link on a larger screen to use the fitting room.</p>
+        </div>
+    </div>
+
     <div id="loader" role="status" aria-live="polite" aria-busy="true">
         <div class="loader-wrap">
             <div class="loader-ring" aria-hidden="true"></div>
@@ -796,644 +864,658 @@
         import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
         import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
         import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+        const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || window.innerWidth < 900;
+        if (isMobile) {
+            // Mark body as mobile-blocked so CSS can hide everything except the message
+            document.body.classList.add('mobile-blocked');
 
-        // ===== Loader helpers =====
-        const loaderEl = document.getElementById('loader');
-        document.body.classList.add('is-loading');
+            // Just in case the loader was visible in markup
+            const loader = document.getElementById('loader');
+            if (loader) loader.remove();
 
-        function finishLoading() {
-            loaderEl.classList.add('done');
-            document.body.classList.remove('is-loading');
-            document.body.classList.add('loaded');
-            setTimeout(() => loaderEl.remove(), 450);
-        }
-        function failLoadingFallback(err) {
-            console.error('Startup failed:', err);
-            finishLoading();
-        }
+            const mobileBlock = document.getElementById('mobile-block');
+            if (mobileBlock) mobileBlock.style.display = 'flex';
 
-        // ===== CONFIG =====
-        const ASSETS_PATH = './assets/';
-        const MODEL_FILE = 'OMGO-Sphere-Demo.gltf';
-        let MODEL_FILL = 0.70;
-        const PIXEL_RATIO_CAP = 2;
+            // Do NOT run any of the Three.js / Pantone / UI boot logic
+        } else {
+            // ===== Loader helpers =====
+            const loaderEl = document.getElementById('loader');
+            document.body.classList.add('is-loading');
 
-        const GROUP_RULES = {
-            A: [/^Colour\s*1_/i], B: [/^Colour\s*2_/i], C: [/^Colour\s*3_/i],
-            D: [/^Colour\s*4_/i], E: [/^Colour\s*5_/i], F: [/^Colour\s*6_/i],
-        };
-        const CORE_RULES = [/^CoreFrontRing_/i];
-        const USB_RULES = [/^SOLID/i];
+            function finishLoading() {
+                loaderEl.classList.add('done');
+                document.body.classList.remove('is-loading');
+                document.body.classList.add('loaded');
+                setTimeout(() => loaderEl.remove(), 450);
+            }
+            function failLoadingFallback(err) {
+                console.error('Startup failed:', err);
+                finishLoading();
+            }
 
-        // ===== THREE: scene & lights =====
-        const wrap = document.getElementById('omgo-canvas');
-        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        renderer.setClearColor(getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#171a23', 1);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.outputColorSpace = THREE.SRGBColorSpace;
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.1;
-        renderer.physicallyCorrectLights = true;
-        wrap.appendChild(renderer.domElement);
+            // ===== CONFIG =====
+            const ASSETS_PATH = './assets/';
+            const MODEL_FILE = 'OMGO-Sphere-Demo.gltf';
+            let MODEL_FILL = 0.70;
+            const PIXEL_RATIO_CAP = 2;
 
-        const scene = new THREE.Scene();
-        const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
-        const pmrem = new THREE.PMREMGenerator(renderer);
-        scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.85).texture;
-        scene.add(new THREE.AmbientLight(0xffffff, .75));
-        const hemi = new THREE.HemisphereLight(0xffffff, 0x303542, .55); scene.add(hemi);
-        const key = new THREE.DirectionalLight(0xffffff, .85); key.position.set(2.4, 3.0, 1.4); scene.add(key);
+            const GROUP_RULES = {
+                A: [/^Colour\s*1_/i], B: [/^Colour\s*2_/i], C: [/^Colour\s*3_/i],
+                D: [/^Colour\s*4_/i], E: [/^Colour\s*5_/i], F: [/^Colour\s*6_/i],
+            };
+            const CORE_RULES = [/^CoreFrontRing_/i];
+            const USB_RULES = [/^SOLID/i];
 
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true; controls.enablePan = false; controls.enableZoom = true;
-        controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI;
+            // ===== THREE: scene & lights =====
+            const wrap = document.getElementById('omgo-canvas');
+            const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setClearColor(getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#171a23', 1);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, PIXEL_RATIO_CAP));
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputColorSpace = THREE.SRGBColorSpace;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.1;
+            renderer.physicallyCorrectLights = true;
+            wrap.appendChild(renderer.domElement);
 
-        function normalizeModel(root) {
-            root.updateWorldMatrix(true, true);
-            let box = new THREE.Box3().setFromObject(root);
-            const center = box.getCenter(new THREE.Vector3());
-            root.position.sub(center);
-            box.setFromObject(root);
-            const size = box.getSize(new THREE.Vector3());
-            const maxAxis = Math.max(size.x, size.y, size.z) || 1.0;
-            root.scale.multiplyScalar(2.0 / maxAxis);
-        }
-        function frameModel(fillFrac = MODEL_FILL) {
-            const H = 2.0;
-            const halfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
-            const dist = (H * 0.5) / (Math.tan(halfFov) * fillFrac);
-            controls.target.set(0, 0, 0);
-            camera.position.set(0, H * 0.45, dist * 1.02);
-            camera.near = 0.01; camera.far = 5000;
-            camera.updateProjectionMatrix();
-            controls.minDistance = dist * 0.6; controls.maxDistance = dist * 2.0;
-            controls.update();
-        }
+            const scene = new THREE.Scene();
+            const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 100);
+            const pmrem = new THREE.PMREMGenerator(renderer);
+            scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.85).texture;
+            scene.add(new THREE.AmbientLight(0xffffff, .75));
+            const hemi = new THREE.HemisphereLight(0xffffff, 0x303542, .55); scene.add(hemi);
+            const key = new THREE.DirectionalLight(0xffffff, .85); key.position.set(2.4, 3.0, 1.4); scene.add(key);
 
-        // ===== Materials & groups =====
-        const groupMeshes = { A: [], B: [], C: [], D: [], E: [], F: [] };
-        const groupMats = {};
-        const ORIGINAL = { A: null, B: null, C: null, D: null, E: null, F: null };
-        const APPLIED = { A: null, B: null, C: null, D: null, E: null, F: null };
+            const controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; controls.enablePan = false; controls.enableZoom = true;
+            controls.minPolarAngle = 0; controls.maxPolarAngle = Math.PI;
 
-        // Track chosen PANTONE name per group for the mini panel/export
-        const PANTONE_SEL = { A: null, B: null, C: null, D: null, E: null, F: null };
+            function normalizeModel(root) {
+                root.updateWorldMatrix(true, true);
+                let box = new THREE.Box3().setFromObject(root);
+                const center = box.getCenter(new THREE.Vector3());
+                root.position.sub(center);
+                box.setFromObject(root);
+                const size = box.getSize(new THREE.Vector3());
+                const maxAxis = Math.max(size.x, size.y, size.z) || 1.0;
+                root.scale.multiplyScalar(2.0 / maxAxis);
+            }
+            function frameModel(fillFrac = MODEL_FILL) {
+                const H = 2.0;
+                const halfFov = THREE.MathUtils.degToRad(camera.fov * 0.5);
+                const dist = (H * 0.5) / (Math.tan(halfFov) * fillFrac);
+                controls.target.set(0, 0, 0);
+                camera.position.set(0, H * 0.45, dist * 1.02);
+                camera.near = 0.01; camera.far = 5000;
+                camera.updateProjectionMatrix();
+                controls.minDistance = dist * 0.6; controls.maxDistance = dist * 2.0;
+                controls.update();
+            }
 
-        const hexFromColor = c => '#' + c.getHexString().toUpperCase();
+            // ===== Materials & groups =====
+            const groupMeshes = { A: [], B: [], C: [], D: [], E: [], F: [] };
+            const groupMats = {};
+            const ORIGINAL = { A: null, B: null, C: null, D: null, E: null, F: null };
+            const APPLIED = { A: null, B: null, C: null, D: null, E: null, F: null };
 
-        function whichGroup(name) {
-            for (const g of Object.keys(GROUP_RULES))
-                for (const rx of GROUP_RULES[g]) if (rx.test(name)) return g;
-            return null;
-        }
-        function getGroupMaterial(g, hex) {
-            if (groupMats[g]) { groupMats[g].color.set(hex); return groupMats[g]; }
-            const mat = new THREE.MeshStandardMaterial({
-                color: new THREE.Color(hex), metalness: 0, roughness: .88, envMapIntensity: .35, side: THREE.DoubleSide
-            });
-            groupMats[g] = mat; return mat;
-        }
-        function getCoreMetalMaterial() {
-            if (getCoreMetalMaterial.cache) return getCoreMetalMaterial.cache;
-            const m = new THREE.MeshPhysicalMaterial({
-                color: 0xF2F2F2, metalness: 1.0, roughness: 0.10, envMapIntensity: 1.8,
-                clearcoat: 0.5, clearcoatRoughness: 0.05, side: THREE.FrontSide
-            });
-            getCoreMetalMaterial.cache = m; return m;
-        }
-        function getUsbMetalMaterial() {
-            if (getUsbMetalMaterial.cache) return getUsbMetalMaterial.cache;
-            const m = new THREE.MeshPhysicalMaterial({
-                color: 0xD3D6DB, metalness: 1.0, roughness: 0.20, envMapIntensity: 1.6,
-                clearcoat: 0.35, clearcoatRoughness: 0.08, side: THREE.FrontSide
-            });
-            getUsbMetalMaterial.cache = m; return m;
-        }
+            // Track chosen PANTONE name per group for the mini panel/export
+            const PANTONE_SEL = { A: null, B: null, C: null, D: null, E: null, F: null };
 
-        function assignGroups(root) {
-            for (const k of Object.keys(groupMeshes)) groupMeshes[k] = [];
-            root.traverse(obj => {
-                if (!obj.isMesh) return;
-                const nm = obj.name || '';
-                if (CORE_RULES.some(rx => rx.test(nm))) { obj.material = getCoreMetalMaterial(); return; }
-                if (USB_RULES.some(rx => rx.test(nm))) { obj.material = getUsbMetalMaterial(); return; }
-                const g = whichGroup(nm); if (!g) return;
-                if (ORIGINAL[g] === null) {
-                    const c = (obj.material && obj.material.color) ? obj.material.color : new THREE.Color(0xCCCCCC);
-                    ORIGINAL[g] = hexFromColor(c);
-                }
-                APPLIED[g] = APPLIED[g] ?? ORIGINAL[g];
-                obj.material = getGroupMaterial(g, APPLIED[g]);
-                groupMeshes[g].push(obj);
-            });
-        }
+            const hexFromColor = c => '#' + c.getHexString().toUpperCase();
 
-        function applyGroupColor(g, hex) {
-            const mat = getGroupMaterial(g, hex);
-            for (const m of groupMeshes[g]) m.material = mat;
-            APPLIED[g] = hex.toUpperCase();
-            document.getElementById('appSw' + g).style.background = APPLIED[g];
-            document.getElementById('appHex' + g).textContent = APPLIED[g];
-            refreshMini(); // keep mini panel live
-        }
+            function whichGroup(name) {
+                for (const g of Object.keys(GROUP_RULES))
+                    for (const rx of GROUP_RULES[g]) if (rx.test(name)) return g;
+                return null;
+            }
+            function getGroupMaterial(g, hex) {
+                if (groupMats[g]) { groupMats[g].color.set(hex); return groupMats[g]; }
+                const mat = new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(hex), metalness: 0, roughness: .88, envMapIntensity: .35, side: THREE.DoubleSide
+                });
+                groupMats[g] = mat; return mat;
+            }
+            function getCoreMetalMaterial() {
+                if (getCoreMetalMaterial.cache) return getCoreMetalMaterial.cache;
+                const m = new THREE.MeshPhysicalMaterial({
+                    color: 0xF2F2F2, metalness: 1.0, roughness: 0.10, envMapIntensity: 1.8,
+                    clearcoat: 0.5, clearcoatRoughness: 0.05, side: THREE.FrontSide
+                });
+                getCoreMetalMaterial.cache = m; return m;
+            }
+            function getUsbMetalMaterial() {
+                if (getUsbMetalMaterial.cache) return getUsbMetalMaterial.cache;
+                const m = new THREE.MeshPhysicalMaterial({
+                    color: 0xD3D6DB, metalness: 1.0, roughness: 0.20, envMapIntensity: 1.6,
+                    clearcoat: 0.35, clearcoatRoughness: 0.08, side: THREE.FrontSide
+                });
+                getUsbMetalMaterial.cache = m; return m;
+            }
 
-        function setOriginalFromPicker(g, hex) {
-            ORIGINAL[g] = hex.toUpperCase();
-            document.getElementById('origSw' + g).style.background = ORIGINAL[g];
-            document.getElementById('origHex' + g).textContent = ORIGINAL[g];
-            // user changed picker → revert to HEX (clear Pantone for this group)
-            PANTONE_SEL[g] = null;
-            rebuildDistancesAndGrid(g);
-            applyGroupColor(g, ORIGINAL[g]);
-        }
+            function assignGroups(root) {
+                for (const k of Object.keys(groupMeshes)) groupMeshes[k] = [];
+                root.traverse(obj => {
+                    if (!obj.isMesh) return;
+                    const nm = obj.name || '';
+                    if (CORE_RULES.some(rx => rx.test(nm))) { obj.material = getCoreMetalMaterial(); return; }
+                    if (USB_RULES.some(rx => rx.test(nm))) { obj.material = getUsbMetalMaterial(); return; }
+                    const g = whichGroup(nm); if (!g) return;
+                    if (ORIGINAL[g] === null) {
+                        const c = (obj.material && obj.material.color) ? obj.material.color : new THREE.Color(0xCCCCCC);
+                        ORIGINAL[g] = hexFromColor(c);
+                    }
+                    APPLIED[g] = APPLIED[g] ?? ORIGINAL[g];
+                    obj.material = getGroupMaterial(g, APPLIED[g]);
+                    groupMeshes[g].push(obj);
+                });
+            }
 
-        // ===== Colour math (Lab / ΔE00) =====
-        function hexToRgb(hex) { const m = hex.replace('#', ''); return { r: parseInt(m.slice(0, 2), 16), g: parseInt(m.slice(2, 4), 16), b: parseInt(m.slice(4, 6), 16) }; }
-        const pivot = v => (v > 0.04045) ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
-        function rgbToXyz({ r, g, b }) {
-            r = pivot(r / 255); g = pivot(g / 255); b = pivot(b / 255);
-            return { x: (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100, y: (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100, z: (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100 };
-        }
-        function xyzToLab({ x, y, z }) {
-            const Xn = 95.047, Yn = 100.000, Zn = 108.883; let fx = x / Xn, fy = y / Yn, fz = z / Zn;
-            const f = t => (t > 0.008856) ? Math.cbrt(t) : (7.787 * t + 16 / 116); fx = f(fx); fy = f(fy); fz = f(fz);
-            return { L: (116 * fy - 16), a: 500 * (fx - fy), b: 200 * (fy - fz) };
-        }
-        function hexToLab(hex) { return xyzToLab(rgbToXyz(hexToRgb(hex))); }
-        function deltaE2000(Lab1, Lab2) {
-            const { L: L1, a: a1, b: b1 } = Lab1, { L: L2, a: a2, b: b2 } = Lab2;
-            const avgLp = (L1 + L2) / 2;
-            const C1 = Math.hypot(a1, b1), C2 = Math.hypot(a2, b2);
-            const avgC = (C1 + C2) / 2;
-            const G = 0.5 * (1 - Math.sqrt(Math.pow(avgC, 7) / (Math.pow(avgC, 7) + Math.pow(25, 7))));
-            const a1p = (1 + G) * a1, a2p = (1 + G) * a2;
-            const C1p = Math.hypot(a1p, b1), C2p = Math.hypot(a2p, b2);
-            const avgCp = (C1p + C2p) / 2;
-            const h1p = Math.atan2(b1, a1p) + (Math.atan2(b1, a1p) < 0 ? 2 * Math.PI : 0);
-            const h2p = Math.atan2(b2, a2p) + (Math.atan2(b2, a2p) < 0 ? 2 * Math.PI : 0);
-            let deltahp;
-            if (Math.abs(h1p - h2p) <= Math.PI) deltahp = h2p - h1p;
-            else deltahp = (h2p <= h1p) ? (h2p - h1p + 2 * Math.PI) : (h2p - h1p - 2 * Math.PI);
-            const avgHp = (Math.abs(h1p - h2p) > Math.PI) ? (h1p + h2p + 2 * Math.PI) / 2 : (h1p + h2p) / 2;
-            const T = 1 - 0.17 * Math.cos(avgHp - Math.PI / 6) + 0.24 * Math.cos(2 * avgHp) + 0.32 * Math.cos(3 * avgHp + Math.PI / 30) - 0.20 * Math.cos(4 * avgHp - 63 * Math.PI / 180);
-            const dLp = L2 - L1;
-            const dCp = C2p - C1p;
-            const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin(deltahp / 2);
-            const SL = 1 + (0.015 * Math.pow(avgLp - 50, 2)) / Math.sqrt(20 + Math.pow(avgLp - 50, 2));
-            const SC = 1 + 0.045 * avgCp;
-            const SH = 1 + 0.015 * avgCp * T;
-            const Rt = -2 * Math.sqrt(Math.pow(avgCp, 7) / (Math.pow(avgCp, 7) + Math.pow(25, 7))) *
-                Math.sin(60 * Math.exp(-Math.pow((avgHp * 180 / Math.PI - 275) / 25, 2)) * Math.PI / 180);
-            return Math.sqrt(Math.pow(dLp / SL, 2) + Math.pow(dCp / SC, 2) + Math.pow(dHp / SH, 2) + Rt * (dCp / SC) * (dHp / SH));
-        }
+            function applyGroupColor(g, hex) {
+                const mat = getGroupMaterial(g, hex);
+                for (const m of groupMeshes[g]) m.material = mat;
+                APPLIED[g] = hex.toUpperCase();
+                document.getElementById('appSw' + g).style.background = APPLIED[g];
+                document.getElementById('appHex' + g).textContent = APPLIED[g];
+                refreshMini(); // keep mini panel live
+            }
 
-        // ===== Pantone DB (JSON) =====
-        let pantoneDB = []; // will be [{name, hex, lab}, ...]
+            function setOriginalFromPicker(g, hex) {
+                ORIGINAL[g] = hex.toUpperCase();
+                document.getElementById('origSw' + g).style.background = ORIGINAL[g];
+                document.getElementById('origHex' + g).textContent = ORIGINAL[g];
+                // user changed picker → revert to HEX (clear Pantone for this group)
+                PANTONE_SEL[g] = null;
+                rebuildDistancesAndGrid(g);
+                applyGroupColor(g, ORIGINAL[g]);
+            }
 
-        function isHexKey(k) {
-            return typeof k === 'string' && /^#?[0-9A-Fa-f]{6}$/.test(k.trim());
-        }
+            // ===== Colour math (Lab / ΔE00) =====
+            function hexToRgb(hex) { const m = hex.replace('#', ''); return { r: parseInt(m.slice(0, 2), 16), g: parseInt(m.slice(2, 4), 16), b: parseInt(m.slice(4, 6), 16) }; }
+            const pivot = v => (v > 0.04045) ? Math.pow((v + 0.055) / 1.055, 2.4) : v / 12.92;
+            function rgbToXyz({ r, g, b }) {
+                r = pivot(r / 255); g = pivot(g / 255); b = pivot(b / 255);
+                return { x: (r * 0.4124 + g * 0.3576 + b * 0.1805) * 100, y: (r * 0.2126 + g * 0.7152 + b * 0.0722) * 100, z: (r * 0.0193 + g * 0.1192 + b * 0.9505) * 100 };
+            }
+            function xyzToLab({ x, y, z }) {
+                const Xn = 95.047, Yn = 100.000, Zn = 108.883; let fx = x / Xn, fy = y / Yn, fz = z / Zn;
+                const f = t => (t > 0.008856) ? Math.cbrt(t) : (7.787 * t + 16 / 116); fx = f(fx); fy = f(fy); fz = f(fz);
+                return { L: (116 * fy - 16), a: 500 * (fx - fy), b: 200 * (fy - fz) };
+            }
+            function hexToLab(hex) { return xyzToLab(rgbToXyz(hexToRgb(hex))); }
+            function deltaE2000(Lab1, Lab2) {
+                const { L: L1, a: a1, b: b1 } = Lab1, { L: L2, a: a2, b: b2 } = Lab2;
+                const avgLp = (L1 + L2) / 2;
+                const C1 = Math.hypot(a1, b1), C2 = Math.hypot(a2, b2);
+                const avgC = (C1 + C2) / 2;
+                const G = 0.5 * (1 - Math.sqrt(Math.pow(avgC, 7) / (Math.pow(avgC, 7) + Math.pow(25, 7))));
+                const a1p = (1 + G) * a1, a2p = (1 + G) * a2;
+                const C1p = Math.hypot(a1p, b1), C2p = Math.hypot(a2p, b2);
+                const avgCp = (C1p + C2p) / 2;
+                const h1p = Math.atan2(b1, a1p) + (Math.atan2(b1, a1p) < 0 ? 2 * Math.PI : 0);
+                const h2p = Math.atan2(b2, a2p) + (Math.atan2(b2, a2p) < 0 ? 2 * Math.PI : 0);
+                let deltahp;
+                if (Math.abs(h1p - h2p) <= Math.PI) deltahp = h2p - h1p;
+                else deltahp = (h2p <= h1p) ? (h2p - h1p + 2 * Math.PI) : (h2p - h1p - 2 * Math.PI);
+                const avgHp = (Math.abs(h1p - h2p) > Math.PI) ? (h1p + h2p + 2 * Math.PI) / 2 : (h1p + h2p) / 2;
+                const T = 1 - 0.17 * Math.cos(avgHp - Math.PI / 6) + 0.24 * Math.cos(2 * avgHp) + 0.32 * Math.cos(3 * avgHp + Math.PI / 30) - 0.20 * Math.cos(4 * avgHp - 63 * Math.PI / 180);
+                const dLp = L2 - L1;
+                const dCp = C2p - C1p;
+                const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin(deltahp / 2);
+                const SL = 1 + (0.015 * Math.pow(avgLp - 50, 2)) / Math.sqrt(20 + Math.pow(avgLp - 50, 2));
+                const SC = 1 + 0.045 * avgCp;
+                const SH = 1 + 0.015 * avgCp * T;
+                const Rt = -2 * Math.sqrt(Math.pow(avgCp, 7) / (Math.pow(avgCp, 7) + Math.pow(25, 7))) *
+                    Math.sin(60 * Math.exp(-Math.pow((avgHp * 180 / Math.PI - 275) / 25, 2)) * Math.PI / 180);
+                return Math.sqrt(Math.pow(dLp / SL, 2) + Math.pow(dCp / SC, 2) + Math.pow(dHp / SH, 2) + Rt * (dCp / SC) * (dHp / SH));
+            }
 
-        function normHex(h) {
-            const x = String(h || '').trim();
-            const y = x.startsWith('#') ? x : '#' + x;
-            return y.toUpperCase();
-        }
+            // ===== Pantone DB (JSON) =====
+            let pantoneDB = []; // will be [{name, hex, lab}, ...]
 
-        function normName(n) {
-            return String(n || '').replace(/\bPC\b/g, 'C').replace(/\s+/g, ' ').trim();
-        }
+            function isHexKey(k) {
+                return typeof k === 'string' && /^#?[0-9A-Fa-f]{6}$/.test(k.trim());
+            }
 
-        async function loadPantoneDB() {
-            try {
-                const res = await fetch(`${ASSETS_PATH}pantone_hex_map.json`, { cache: 'no-store' });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const payload = await res.json();
+            function normHex(h) {
+                const x = String(h || '').trim();
+                const y = x.startsWith('#') ? x : '#' + x;
+                return y.toUpperCase();
+            }
 
-                const entries = [];
-                const seen = new Set(); // dedupe by name|hex
+            function normName(n) {
+                return String(n || '').replace(/\bPC\b/g, 'C').replace(/\s+/g, ' ').trim();
+            }
 
-                if (Array.isArray(payload)) {
-                    // Shape 1: [{ name, hex }]
-                    payload.forEach(item => {
-                        if (!item || typeof item !== 'object') return;
-                        const name = normName(item.name);
-                        const hex = normHex(item.hex);
-                        if (!/^#[0-9A-F]{6}$/.test(hex) || !name) return;
-                        const key = `${name}|${hex}`;
-                        if (!seen.has(key)) { seen.add(key); entries.push({ name, hex }); }
-                    });
-                } else if (payload && typeof payload === 'object') {
-                    const keys = Object.keys(payload);
-                    // Decide whether keys look like HEX (#RRGGBB) or NAMES
-                    const mostlyHexKeys =
-                        keys.length > 0 &&
-                        keys.filter(k => isHexKey(k)).length >= Math.max(1, Math.floor(keys.length * 0.6));
+            async function loadPantoneDB() {
+                try {
+                    const res = await fetch(`${ASSETS_PATH}pantone_hex_map.json`, { cache: 'no-store' });
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const payload = await res.json();
 
-                    if (mostlyHexKeys) {
-                        // Shape 3: { "#RRGGBB": ["PANTONE 100 C", ...] }  (or single string)
-                        for (const [k, v] of Object.entries(payload)) {
-                            const hex = normHex(k);
-                            if (!/^#[0-9A-F]{6}$/.test(hex)) continue;
-                            const list = Array.isArray(v) ? v : [v];
-                            list.forEach(n => {
-                                const name = normName(n);
-                                if (!name) return;
-                                const key = `${name}|${hex}`;
-                                if (!seen.has(key)) { seen.add(key); entries.push({ name, hex }); }
-                            });
-                        }
-                    } else {
-                        // Shape 2: { "PANTONE 100 C": "#FEDD00", ... }  (name → hex)
-                        for (const [n, h] of Object.entries(payload)) {
-                            const name = normName(n);
-                            const hex = normHex(h);
-                            if (!/^#[0-9A-F]{6}$/.test(hex) || !name) continue;
+                    const entries = [];
+                    const seen = new Set(); // dedupe by name|hex
+
+                    if (Array.isArray(payload)) {
+                        // Shape 1: [{ name, hex }]
+                        payload.forEach(item => {
+                            if (!item || typeof item !== 'object') return;
+                            const name = normName(item.name);
+                            const hex = normHex(item.hex);
+                            if (!/^#[0-9A-F]{6}$/.test(hex) || !name) return;
                             const key = `${name}|${hex}`;
                             if (!seen.has(key)) { seen.add(key); entries.push({ name, hex }); }
+                        });
+                    } else if (payload && typeof payload === 'object') {
+                        const keys = Object.keys(payload);
+                        // Decide whether keys look like HEX (#RRGGBB) or NAMES
+                        const mostlyHexKeys =
+                            keys.length > 0 &&
+                            keys.filter(k => isHexKey(k)).length >= Math.max(1, Math.floor(keys.length * 0.6));
+
+                        if (mostlyHexKeys) {
+                            // Shape 3: { "#RRGGBB": ["PANTONE 100 C", ...] }  (or single string)
+                            for (const [k, v] of Object.entries(payload)) {
+                                const hex = normHex(k);
+                                if (!/^#[0-9A-F]{6}$/.test(hex)) continue;
+                                const list = Array.isArray(v) ? v : [v];
+                                list.forEach(n => {
+                                    const name = normName(n);
+                                    if (!name) return;
+                                    const key = `${name}|${hex}`;
+                                    if (!seen.has(key)) { seen.add(key); entries.push({ name, hex }); }
+                                });
+                            }
+                        } else {
+                            // Shape 2: { "PANTONE 100 C": "#FEDD00", ... }  (name → hex)
+                            for (const [n, h] of Object.entries(payload)) {
+                                const name = normName(n);
+                                const hex = normHex(h);
+                                if (!/^#[0-9A-F]{6}$/.test(hex) || !name) continue;
+                                const key = `${name}|${hex}`;
+                                if (!seen.has(key)) { seen.add(key); entries.push({ name, hex }); }
+                            }
                         }
                     }
+
+                    if (!entries.length) throw new Error('No valid Pantone entries parsed.');
+
+                    // Precompute Lab for ΔE00
+                    entries.forEach(p => { p.lab = hexToLab(p.hex); });
+                    pantoneDB = entries;
+                } catch (e) {
+                    console.warn('Pantone DB load failed, falling back to tiny demo set.', e);
+                    pantoneDB = [
+                        { name: 'PANTONE 485 C', hex: '#DA291C' },
+                        { name: 'PANTONE 2995 C', hex: '#00A3E0' },
+                        { name: 'PANTONE 2727 C', hex: '#2C73FF' },
+                        { name: 'PANTONE 130 C', hex: '#F2A900' },
+                        { name: 'PANTONE 368 C', hex: '#6CC24A' }
+                    ];
+                    pantoneDB.forEach(p => { p.lab = hexToLab(p.hex); });
                 }
-
-                if (!entries.length) throw new Error('No valid Pantone entries parsed.');
-
-                // Precompute Lab for ΔE00
-                entries.forEach(p => { p.lab = hexToLab(p.hex); });
-                pantoneDB = entries;
-            } catch (e) {
-                console.warn('Pantone DB load failed, falling back to tiny demo set.', e);
-                pantoneDB = [
-                    { name: 'PANTONE 485 C', hex: '#DA291C' },
-                    { name: 'PANTONE 2995 C', hex: '#00A3E0' },
-                    { name: 'PANTONE 2727 C', hex: '#2C73FF' },
-                    { name: 'PANTONE 130 C', hex: '#F2A900' },
-                    { name: 'PANTONE 368 C', hex: '#6CC24A' }
-                ];
-                pantoneDB.forEach(p => { p.lab = hexToLab(p.hex); });
-            }
-        }
-
-        const ALL_THRESHOLDS = [8, 16, 32, 64];
-
-        function getSelectEl(g) { return document.getElementById('dist' + g); }
-        function getGridEl(g) { return document.getElementById('grid' + g); }
-
-        function rebuildDistancesAndGrid(groupKey, preferThreshold) {
-            const select = getSelectEl(groupKey);
-            const refHex = (ORIGINAL[groupKey] || document.getElementById('col' + groupKey).value).toUpperCase();
-            const refLab = hexToLab(refHex);
-
-            const availability = {};
-            ALL_THRESHOLDS.forEach(t => {
-                const count = pantoneDB.reduce((acc, p) => acc + (deltaE2000(refLab, p.lab) <= t ? 1 : 0), 0);
-                availability[t] = count;
-            });
-
-            select.innerHTML = '';
-            const usable = ALL_THRESHOLDS.filter(t => availability[t] > 0);
-            if (usable.length === 0) {
-                renderPantoneGrid(groupKey, refHex, 64, /*forceMsg*/true);
-                return;
-            }
-            usable.forEach(t => {
-                const opt = document.createElement('option'); opt.value = String(t); opt.textContent = String(t);
-                select.appendChild(opt);
-            });
-
-            const chosen = usable.includes(preferThreshold) ? preferThreshold : usable[0];
-            select.value = String(chosen);
-            renderPantoneGrid(groupKey, refHex, chosen);
-        }
-
-        function renderPantoneGrid(groupKey, refHex, threshold, forceMsg = false) {
-            const grid = getGridEl(groupKey);
-            grid.innerHTML = '';
-            const refLab = hexToLab(refHex);
-
-            const ranked = pantoneDB
-                .map(p => ({ ...p, dE: deltaE2000(refLab, p.lab) }))
-                .sort((a, b) => a.dE - b.dE)
-                .filter(p => p.dE <= threshold);
-
-            if (ranked.length === 0) {
-                applyGroupColor(groupKey, ORIGINAL[groupKey] || refHex);
-                if (forceMsg) {
-                    const msg = document.createElement('div');
-                    msg.style.color = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#97a3b6';
-                    msg.style.fontSize = '12px';
-                    msg.textContent = 'No PANTONE matches available at any distance. Using Original.';
-                    grid.appendChild(msg);
-                }
-                return;
             }
 
-            ranked.forEach(p => {
-                const chip = document.createElement('div'); chip.className = 'chip';
-                const sw = document.createElement('div'); sw.className = 'chipSw'; sw.style.background = p.hex;
-                const lbl = document.createElement('div'); lbl.className = 'chipLbl'; lbl.textContent = p.name;
-                const meta = document.createElement('div'); meta.className = 'chipMeta'; meta.textContent = p.hex.toUpperCase() + ' — ΔE ' + p.dE.toFixed(1);
-                chip.appendChild(sw); chip.appendChild(lbl); chip.appendChild(meta);
-                chip.addEventListener('click', () => {
-                    [...grid.querySelectorAll('.chip')].forEach(c => c.classList.remove('selected'));
-                    chip.classList.add('selected');
-                    PANTONE_SEL[groupKey] = p.name;
-                    applyGroupColor(groupKey, p.hex);
+            const ALL_THRESHOLDS = [8, 16, 32, 64];
+
+            function getSelectEl(g) { return document.getElementById('dist' + g); }
+            function getGridEl(g) { return document.getElementById('grid' + g); }
+
+            function rebuildDistancesAndGrid(groupKey, preferThreshold) {
+                const select = getSelectEl(groupKey);
+                const refHex = (ORIGINAL[groupKey] || document.getElementById('col' + groupKey).value).toUpperCase();
+                const refLab = hexToLab(refHex);
+
+                const availability = {};
+                ALL_THRESHOLDS.forEach(t => {
+                    const count = pantoneDB.reduce((acc, p) => acc + (deltaE2000(refLab, p.lab) <= t ? 1 : 0), 0);
+                    availability[t] = count;
                 });
-                grid.appendChild(chip);
+
+                select.innerHTML = '';
+                const usable = ALL_THRESHOLDS.filter(t => availability[t] > 0);
+                if (usable.length === 0) {
+                    renderPantoneGrid(groupKey, refHex, 64, /*forceMsg*/true);
+                    return;
+                }
+                usable.forEach(t => {
+                    const opt = document.createElement('option'); opt.value = String(t); opt.textContent = String(t);
+                    select.appendChild(opt);
+                });
+
+                const chosen = usable.includes(preferThreshold) ? preferThreshold : usable[0];
+                select.value = String(chosen);
+                renderPantoneGrid(groupKey, refHex, chosen);
+            }
+
+            function renderPantoneGrid(groupKey, refHex, threshold, forceMsg = false) {
+                const grid = getGridEl(groupKey);
+                grid.innerHTML = '';
+                const refLab = hexToLab(refHex);
+
+                const ranked = pantoneDB
+                    .map(p => ({ ...p, dE: deltaE2000(refLab, p.lab) }))
+                    .sort((a, b) => a.dE - b.dE)
+                    .filter(p => p.dE <= threshold);
+
+                if (ranked.length === 0) {
+                    applyGroupColor(groupKey, ORIGINAL[groupKey] || refHex);
+                    if (forceMsg) {
+                        const msg = document.createElement('div');
+                        msg.style.color = getComputedStyle(document.documentElement).getPropertyValue('--muted') || '#97a3b6';
+                        msg.style.fontSize = '12px';
+                        msg.textContent = 'No PANTONE matches available at any distance. Using Original.';
+                        grid.appendChild(msg);
+                    }
+                    return;
+                }
+
+                ranked.forEach(p => {
+                    const chip = document.createElement('div'); chip.className = 'chip';
+                    const sw = document.createElement('div'); sw.className = 'chipSw'; sw.style.background = p.hex;
+                    const lbl = document.createElement('div'); lbl.className = 'chipLbl'; lbl.textContent = p.name;
+                    const meta = document.createElement('div'); meta.className = 'chipMeta'; meta.textContent = p.hex.toUpperCase() + ' — ΔE ' + p.dE.toFixed(1);
+                    chip.appendChild(sw); chip.appendChild(lbl); chip.appendChild(meta);
+                    chip.addEventListener('click', () => {
+                        [...grid.querySelectorAll('.chip')].forEach(c => c.classList.remove('selected'));
+                        chip.classList.add('selected');
+                        PANTONE_SEL[groupKey] = p.name;
+                        applyGroupColor(groupKey, p.hex);
+                    });
+                    grid.appendChild(chip);
+                });
+
+                initializeCollapseUI(groupKey);
+            }
+
+            // ===== Bottom-right panel (A–F) =====
+            const miniList = document.getElementById('miniList');
+            const exportBtn = document.getElementById('exportTxt');
+
+            const groupLabels = {
+                A: 'Theme Colour', B: 'Side Colour 1', C: 'Side Colour 2',
+                D: 'Main Colour 1', E: 'Main Colour 2', F: 'Main Colour 3'
+            };
+
+            function refreshMini() {
+                const order = ['A', 'B', 'C', 'D', 'E', 'F'];
+                miniList.innerHTML = '';
+                order.forEach(g => {
+                    const item = document.createElement('div'); item.className = 'item'; if (PANTONE_SEL[g]) item.classList.add('is-pantone');
+                    const sw = document.createElement('div'); sw.className = 'sw'; sw.style.background = (APPLIED[g] || ORIGINAL[g] || '#000');
+                    const meta = document.createElement('div'); meta.className = 'meta';
+                    const label = document.createElement('div'); label.className = 'label'; label.textContent = `${groupLabels[g]}`;
+                    const hex = document.createElement('div'); hex.className = 'hexline'; hex.textContent = (APPLIED[g] || '—');
+                    const pant = document.createElement('div'); pant.className = 'pant'; pant.textContent = (PANTONE_SEL[g] || 'No PANTONE colour is selected');
+                    const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = 'Live';
+                    meta.appendChild(label); meta.appendChild(hex); meta.appendChild(pant);
+                    item.appendChild(sw); item.appendChild(meta); item.appendChild(tag);
+                    miniList.appendChild(item);
+                });
+            }
+
+            exportBtn.addEventListener('click', () => {
+                const order = ['A', 'B', 'C', 'D', 'E', 'F'];
+                const indexList = { A: 'Theme Colour', B: 'Side Colour 1', C: 'Side Colour 2', D: 'Main Colour 1', E: 'Main Colour 2', F: 'Main Colour 3' };
+                const lines = order.map(g => {
+                    const pant = PANTONE_SEL[g] ? `${PANTONE_SEL[g]}` : 'No PANTONE colour is selected';
+                    const hex = (APPLIED[g] || ORIGINAL[g] || '—');
+                    return `${indexList[g]} - ${pant} - ${hex}`;
+                });
+                const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = 'omgo-recent-colours.txt';
+                document.body.appendChild(a); a.click(); URL.revokeObjectURL(url); a.remove();
             });
 
-            initializeCollapseUI(groupKey);
-        }
+            // ===== Collapsible panel + outside click =====
+            const panel = document.getElementById('panel');
+            const toggle = document.getElementById('togglePanel');
+            const clickLayer = document.getElementById('clickLayer');
+            let collapsed = false;
 
-        // ===== Bottom-right panel (A–F) =====
-        const miniList = document.getElementById('miniList');
-        const exportBtn = document.getElementById('exportTxt');
+            function setCollapsed(v) {
+                collapsed = v;
+                panel.classList.toggle('collapsed', collapsed);
+                toggle.textContent = collapsed ? '☰' : '✕';
+                toggle.title = collapsed ? 'Show controls' : 'Hide controls';
+                clickLayer.classList.toggle('active', !collapsed);
+            }
+            toggle.addEventListener('click', () => setCollapsed(!collapsed));
+            setCollapsed(false);
+            clickLayer.classList.add('active');
 
-        const groupLabels = {
-            A: 'Theme Colour', B: 'Side Colour 1', C: 'Side Colour 2',
-            D: 'Main Colour 1', E: 'Main Colour 2', F: 'Main Colour 3'
-        };
-
-        function refreshMini() {
-            const order = ['A', 'B', 'C', 'D', 'E', 'F'];
-            miniList.innerHTML = '';
-            order.forEach(g => {
-                const item = document.createElement('div'); item.className = 'item'; if (PANTONE_SEL[g]) item.classList.add('is-pantone');
-                const sw = document.createElement('div'); sw.className = 'sw'; sw.style.background = (APPLIED[g] || ORIGINAL[g] || '#000');
-                const meta = document.createElement('div'); meta.className = 'meta';
-                const label = document.createElement('div'); label.className = 'label'; label.textContent = `${groupLabels[g]}`;
-                const hex = document.createElement('div'); hex.className = 'hexline'; hex.textContent = (APPLIED[g] || '—');
-                const pant = document.createElement('div'); pant.className = 'pant'; pant.textContent = (PANTONE_SEL[g] || 'No PANTONE colour is selected');
-                const tag = document.createElement('div'); tag.className = 'tag'; tag.textContent = 'Live';
-                meta.appendChild(label); meta.appendChild(hex); meta.appendChild(pant);
-                item.appendChild(sw); item.appendChild(meta); item.appendChild(tag);
-                miniList.appendChild(item);
+            // close when clicking anywhere outside the panel
+            clickLayer.addEventListener('pointerdown', (e) => {
+                const path = e.composedPath ? e.composedPath() : [];
+                if (!path.includes(panel)) setCollapsed(true);
             });
-        }
 
-        exportBtn.addEventListener('click', () => {
-            const order = ['A', 'B', 'C', 'D', 'E', 'F'];
-            const indexList = { A: 'Theme Colour', B: 'Side Colour 1', C: 'Side Colour 2', D: 'Main Colour 1', E: 'Main Colour 2', F: 'Main Colour 3' };
-            const lines = order.map(g => {
-                const pant = PANTONE_SEL[g] ? `${PANTONE_SEL[g]}` : 'No PANTONE colour is selected';
-                const hex = (APPLIED[g] || ORIGINAL[g] || '—');
-                return `${indexList[g]} - ${pant} - ${hex}`;
-            });
-            const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = 'omgo-recent-colours.txt';
-            document.body.appendChild(a); a.click(); URL.revokeObjectURL(url); a.remove();
-        });
+            // ===== Theme toggle (dark/light) =====
+            const themeSwitch = document.getElementById('themeSwitch'); // unchecked = dark, checked = light
+            function setTheme(mode) { // 'dark' | 'light'
+                document.documentElement.setAttribute('data-theme', mode === 'light' ? 'light' : 'dark');
+                themeSwitch.checked = (mode === 'light');
+                const cssCanvas = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim();
+                renderer.setClearColor(cssCanvas || (mode === 'light' ? '#f0f2f7' : '#171a23'), 1);
+            }
+            themeSwitch.addEventListener('change', () => setTheme(themeSwitch.checked ? 'light' : 'dark'));
+            setTheme('light'); // keep your default light setting
 
-        // ===== Collapsible panel + outside click =====
-        const panel = document.getElementById('panel');
-        const toggle = document.getElementById('togglePanel');
-        const clickLayer = document.getElementById('clickLayer');
-        let collapsed = false;
+            // per-group collapse state (expanded by default on first load)
+            const COLLAPSED = { A: false, B: false, C: false, D: false, E: false, F: false };
 
-        function setCollapsed(v) {
-            collapsed = v;
-            panel.classList.toggle('collapsed', collapsed);
-            toggle.textContent = collapsed ? '☰' : '✕';
-            toggle.title = collapsed ? 'Show controls' : 'Hide controls';
-            clickLayer.classList.toggle('active', !collapsed);
-        }
-        toggle.addEventListener('click', () => setCollapsed(!collapsed));
-        setCollapsed(false);
-        clickLayer.classList.add('active');
+            function ensureGridWrap(groupKey) {
+                const grid = getGridEl(groupKey);
+                if (grid.parentElement && grid.parentElement.classList.contains('grid-wrap')) return grid.parentElement;
 
-        // close when clicking anywhere outside the panel
-        clickLayer.addEventListener('pointerdown', (e) => {
-            const path = e.composedPath ? e.composedPath() : [];
-            if (!path.includes(panel)) setCollapsed(true);
-        });
+                const wrap = document.createElement('div');
+                wrap.className = 'grid-wrap';
+                grid.parentElement.insertBefore(wrap, grid);
+                wrap.appendChild(grid);
+                return wrap;
+            }
 
-        // ===== Theme toggle (dark/light) =====
-        const themeSwitch = document.getElementById('themeSwitch'); // unchecked = dark, checked = light
-        function setTheme(mode) { // 'dark' | 'light'
-            document.documentElement.setAttribute('data-theme', mode === 'light' ? 'light' : 'dark');
-            themeSwitch.checked = (mode === 'light');
-            const cssCanvas = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim();
-            renderer.setClearColor(cssCanvas || (mode === 'light' ? '#f0f2f7' : '#171a23'), 1);
-        }
-        themeSwitch.addEventListener('change', () => setTheme(themeSwitch.checked ? 'light' : 'dark'));
-        setTheme('light'); // keep your default light setting
+            function attachCollapseButton(groupKey) {
+                const row = document.querySelector(`.row[data-group="${groupKey}"]`);
+                const subhdr = row.querySelector('.subhdr');
+                if (subhdr.querySelector('.collBtn')) return;
 
-        // per-group collapse state (expanded by default on first load)
-        const COLLAPSED = { A: false, B: false, C: false, D: false, E: false, F: false };
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'collBtn';
+                btn.innerHTML = '<span class="chev">▾</span><span>Collapse</span>';
+                subhdr.appendChild(btn);
+                syncCollBtnVisual(btn, COLLAPSED[groupKey]);
+                btn.addEventListener('click', () => {
+                    COLLAPSED[groupKey] = !COLLAPSED[groupKey];
+                    applyCollapsedView(groupKey);
+                    btn.querySelector('span:last-child').textContent = COLLAPSED[groupKey] ? 'Expand' : 'Collapse';
+                });
+            }
 
-        function ensureGridWrap(groupKey) {
-            const grid = getGridEl(groupKey);
-            if (grid.parentElement && grid.parentElement.classList.contains('grid-wrap')) return grid.parentElement;
+            function collBtnFor(groupKey) {
+                return document.querySelector(`.row[data-group="${groupKey}"] .subhdr .collBtn`);
+            }
 
-            const wrap = document.createElement('div');
-            wrap.className = 'grid-wrap';
-            grid.parentElement.insertBefore(wrap, grid);
-            wrap.appendChild(grid);
-            return wrap;
-        }
+            function syncCollBtnVisual(btn, isCollapsed) {
+                if (!btn) return;
+                const chev = btn.querySelector('.chev');
+                const lbl = btn.querySelector('span:last-child');
+                if (chev) chev.textContent = isCollapsed ? '▾' : '▸';
+                if (lbl) lbl.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                btn.dataset.state = isCollapsed ? 'collapsed' : 'expanded';
+            }
 
-        function attachCollapseButton(groupKey) {
-            const row = document.querySelector(`.row[data-group="${groupKey}"]`);
-            const subhdr = row.querySelector('.subhdr');
-            if (subhdr.querySelector('.collBtn')) return;
+            function measureAndSetRowHeight(groupKey) {
+                const grid = getGridEl(groupKey);
+                const wrap = ensureGridWrap(groupKey);
+                const chip = grid.querySelector('.chip');
+                if (!chip) return;
 
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'collBtn';
-            btn.innerHTML = '<span class="chev">▾</span><span>Collapse</span>';
-            subhdr.appendChild(btn);
-            syncCollBtnVisual(btn, COLLAPSED[groupKey]);
-            btn.addEventListener('click', () => {
-                COLLAPSED[groupKey] = !COLLAPSED[groupKey];
+                // Measure one chip to infer row height including grid gap
+                const chipRect = chip.getBoundingClientRect();
+                const cs = getComputedStyle(grid);
+                const gapY = parseFloat(cs.rowGap || cs.gap || '8') || 8;
+                const rowH = Math.ceil(chipRect.height + gapY);
+
+                // Set CSS vars:
+                //  - --chip-row: base single-row height (if you need it later)
+                //  - --chip-collapsed: ~1.2 rows (subtle hint there’s more)
+                //  - --chip-max: up to 5 rows for expanded view
+                wrap.style.setProperty('--chip-row', `${rowH}px`);
+                wrap.style.setProperty('--chip-collapsed', `${Math.ceil(rowH * 1.2)}px`);
+                wrap.style.setProperty('--chip-max', `${rowH * 5}px`);
+            }
+
+            function applyCollapsedView(groupKey) {
+                const wrap = ensureGridWrap(groupKey);
+                // Always measure so both collapsed/expanded limits are up to date
+                measureAndSetRowHeight(groupKey);
+
+                if (COLLAPSED[groupKey]) {
+                    wrap.classList.add('collapsed');
+                } else {
+                    wrap.classList.remove('collapsed'); // expanded uses --chip-max cap
+                }
+                syncCollBtnVisual(collBtnFor(groupKey), COLLAPSED[groupKey]);
+            }
+
+            function initializeCollapseUI(groupKey) {
+                ensureGridWrap(groupKey);
+                attachCollapseButton(groupKey);
                 applyCollapsedView(groupKey);
-                btn.querySelector('span:last-child').textContent = COLLAPSED[groupKey] ? 'Expand' : 'Collapse';
-            });
-        }
-
-        function collBtnFor(groupKey) {
-            return document.querySelector(`.row[data-group="${groupKey}"] .subhdr .collBtn`);
-        }
-
-        function syncCollBtnVisual(btn, isCollapsed) {
-            if (!btn) return;
-            const chev = btn.querySelector('.chev');
-            const lbl = btn.querySelector('span:last-child');
-            if (chev) chev.textContent = isCollapsed ? '▾' : '▸';
-            if (lbl) lbl.textContent = isCollapsed ? 'Expand' : 'Collapse';
-            btn.dataset.state = isCollapsed ? 'collapsed' : 'expanded';
-        }
-
-        function measureAndSetRowHeight(groupKey) {
-            const grid = getGridEl(groupKey);
-            const wrap = ensureGridWrap(groupKey);
-            const chip = grid.querySelector('.chip');
-            if (!chip) return;
-
-            // Measure one chip to infer row height including grid gap
-            const chipRect = chip.getBoundingClientRect();
-            const cs = getComputedStyle(grid);
-            const gapY = parseFloat(cs.rowGap || cs.gap || '8') || 8;
-            const rowH = Math.ceil(chipRect.height + gapY);
-
-            // Set CSS vars:
-            //  - --chip-row: base single-row height (if you need it later)
-            //  - --chip-collapsed: ~1.2 rows (subtle hint there’s more)
-            //  - --chip-max: up to 5 rows for expanded view
-            wrap.style.setProperty('--chip-row', `${rowH}px`);
-            wrap.style.setProperty('--chip-collapsed', `${Math.ceil(rowH * 1.2)}px`);
-            wrap.style.setProperty('--chip-max', `${rowH * 5}px`);
-        }
-
-        function applyCollapsedView(groupKey) {
-            const wrap = ensureGridWrap(groupKey);
-            // Always measure so both collapsed/expanded limits are up to date
-            measureAndSetRowHeight(groupKey);
-
-            if (COLLAPSED[groupKey]) {
-                wrap.classList.add('collapsed');
-            } else {
-                wrap.classList.remove('collapsed'); // expanded uses --chip-max cap
             }
-            syncCollBtnVisual(collBtnFor(groupKey), COLLAPSED[groupKey]);
-        }
 
-        function initializeCollapseUI(groupKey) {
-            ensureGridWrap(groupKey);
-            attachCollapseButton(groupKey);
-            applyCollapsedView(groupKey);
-        }
+            // ===== UI wiring =====
+            const els = {
+                A: colA, B: colB, C: colC, D: colD, E: colE, F: colF,
+                randomize: document.getElementById('randomize'),
+                reset: document.getElementById('reset'),
+            };
 
-        // ===== UI wiring =====
-        const els = {
-            A: colA, B: colB, C: colC, D: colD, E: colE, F: colF,
-            randomize: document.getElementById('randomize'),
-            reset: document.getElementById('reset'),
-        };
-
-        function seedPickers() {
-            ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                const hex = ORIGINAL[g] || els[g].value;
-                els[g].value = hex;
-                document.getElementById('origSw' + g).style.background = hex;
-                document.getElementById('origHex' + g).textContent = hex.toUpperCase();
-                applyGroupColor(g, hex);
-                rebuildDistancesAndGrid(g);
-            });
-
-            // "Original" cards: revert to original HEX and clear Pantone highlight
-            ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                const card = document.getElementById('origCard' + g);
-                card.addEventListener('click', () => {
-                    PANTONE_SEL[g] = null;
-                    applyGroupColor(g, ORIGINAL[g]);
-                    [...getGridEl(g).querySelectorAll('.chip')].forEach(c => c.classList.remove('selected'));
-                });
-            });
-
-            // Listeners
-            ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                els[g].addEventListener('input', e => setOriginalFromPicker(g, e.target.value));
-                getSelectEl(g).addEventListener('change', e => renderPantoneGrid(g, ORIGINAL[g] || els[g].value, parseInt(e.target.value, 10)));
-            });
-
-            // Randomize (keeps distance lists)
-            els.randomize.addEventListener('click', () => {
-                const rand = () => '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+            function seedPickers() {
                 ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                    COLLAPSED[g] = true;
-                    const c = rand(); els[g].value = c; setOriginalFromPicker(g, c);
-                    initializeCollapseUI(g);
+                    const hex = ORIGINAL[g] || els[g].value;
+                    els[g].value = hex;
+                    document.getElementById('origSw' + g).style.background = hex;
+                    document.getElementById('origHex' + g).textContent = hex.toUpperCase();
+                    applyGroupColor(g, hex);
+                    rebuildDistancesAndGrid(g);
                 });
-            });
 
-            // RESET: restore to load-time state
-            els.reset.addEventListener('click', () => {
-                setTheme(initialState.theme);
-                setCollapsed(initialState.collapsed);
-
+                // "Original" cards: revert to original HEX and clear Pantone highlight
                 ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                    ORIGINAL[g] = initialState.originals[g];
-                    APPLIED[g] = initialState.applied[g];
-
-                    els[g].value = ORIGINAL[g];
-                    document.getElementById('origSw' + g).style.background = ORIGINAL[g];
-                    document.getElementById('origHex' + g).textContent = ORIGINAL[g];
-                    document.getElementById('appSw' + g).style.background = APPLIED[g];
-                    document.getElementById('appHex' + g).textContent = APPLIED[g];
-
-                    applyGroupColor(g, APPLIED[g]);
-                    rebuildDistancesAndGrid(g, parseInt(initialState.dists[g], 10));
-                    PANTONE_SEL[g] = null;
-
-                    COLLAPSED[g] = true;
-                    initializeCollapseUI(g);
+                    const card = document.getElementById('origCard' + g);
+                    card.addEventListener('click', () => {
+                        PANTONE_SEL[g] = null;
+                        applyGroupColor(g, ORIGINAL[g]);
+                        [...getGridEl(g).querySelectorAll('.chip')].forEach(c => c.classList.remove('selected'));
+                    });
                 });
 
-                refreshMini();
-            });
-        }
-
-        // ===== Loaders (wrapped as Promises) =====
-        let model = null;
-        const initialState = { theme: 'dark', collapsed: false, originals: {}, applied: {}, dists: {} };
-
-        function loadModel() {
-            return new Promise((resolve, reject) => {
-                new GLTFLoader().setPath(ASSETS_PATH).setResourcePath(ASSETS_PATH).load(
-                    MODEL_FILE,
-                    (gltf) => {
-                        model = gltf.scene; normalizeModel(model); scene.add(model); assignGroups(model);
-                        frameModel(MODEL_FILL);
-                        resolve();
-                    },
-                    undefined,
-                    (err) => reject(err)
-                );
-            });
-        }
-
-        // ===== Boot sequence: wait for BOTH Pantone DB + GLTF =====
-        (async function boot() {
-            try {
-                await Promise.all([loadPantoneDB(), loadModel()]);
-
-                // per-group collapse UI set up AFTER Pantone DB is ready
+                // Listeners
                 ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                    COLLAPSED[g] = false;
-                    initializeCollapseUI(g);
+                    els[g].addEventListener('input', e => setOriginalFromPicker(g, e.target.value));
+                    getSelectEl(g).addEventListener('change', e => renderPantoneGrid(g, ORIGINAL[g] || els[g].value, parseInt(e.target.value, 10)));
                 });
 
-                // Seed UI & capture initial state
-                seedPickers();
-                ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
-                    initialState.originals[g] = ORIGINAL[g];
-                    initialState.applied[g] = APPLIED[g];
-                    initialState.dists[g] = document.getElementById('dist' + g).value;
+                // Randomize (keeps distance lists)
+                els.randomize.addEventListener('click', () => {
+                    const rand = () => '#' + Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0');
+                    ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
+                        COLLAPSED[g] = true;
+                        const c = rand(); els[g].value = c; setOriginalFromPicker(g, c);
+                        initializeCollapseUI(g);
+                    });
                 });
-                initialState.theme = (document.documentElement.getAttribute('data-theme') || 'dark');
-                initialState.collapsed = false;
 
-                refreshMini();
-                finishLoading();
-            } catch (e) {
-                failLoadingFallback(e);
+                // RESET: restore to load-time state
+                els.reset.addEventListener('click', () => {
+                    setTheme(initialState.theme);
+                    setCollapsed(initialState.collapsed);
+
+                    ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
+                        ORIGINAL[g] = initialState.originals[g];
+                        APPLIED[g] = initialState.applied[g];
+
+                        els[g].value = ORIGINAL[g];
+                        document.getElementById('origSw' + g).style.background = ORIGINAL[g];
+                        document.getElementById('origHex' + g).textContent = ORIGINAL[g];
+                        document.getElementById('appSw' + g).style.background = APPLIED[g];
+                        document.getElementById('appHex' + g).textContent = APPLIED[g];
+
+                        applyGroupColor(g, APPLIED[g]);
+                        rebuildDistancesAndGrid(g, parseInt(initialState.dists[g], 10));
+                        PANTONE_SEL[g] = null;
+
+                        COLLAPSED[g] = true;
+                        initializeCollapseUI(g);
+                    });
+
+                    refreshMini();
+                });
             }
-        })();
 
-        // ===== Resize & render loop =====
-        window.addEventListener('resize', () => {
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            if (model) frameModel(MODEL_FILL);
-        });
-        (function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+            // ===== Loaders (wrapped as Promises) =====
+            let model = null;
+            const initialState = { theme: 'dark', collapsed: false, originals: {}, applied: {}, dists: {} };
 
-        // Dev helpers
-        window.setFill = v => { MODEL_FILL = v; if (model) frameModel(MODEL_FILL); };
-        window.listAllMeshNames = () => { const names = new Set(); scene.traverse(o => { if (o.isMesh) names.add(o.name); }); console.table([...names].sort()); };
+            function loadModel() {
+                return new Promise((resolve, reject) => {
+                    new GLTFLoader().setPath(ASSETS_PATH).setResourcePath(ASSETS_PATH).load(
+                        MODEL_FILE,
+                        (gltf) => {
+                            model = gltf.scene; normalizeModel(model); scene.add(model); assignGroups(model);
+                            frameModel(MODEL_FILL);
+                            resolve();
+                        },
+                        undefined,
+                        (err) => reject(err)
+                    );
+                });
+            }
+
+            // ===== Boot sequence: wait for BOTH Pantone DB + GLTF =====
+            (async function boot() {
+                try {
+                    await Promise.all([loadPantoneDB(), loadModel()]);
+
+                    // per-group collapse UI set up AFTER Pantone DB is ready
+                    ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
+                        COLLAPSED[g] = false;
+                        initializeCollapseUI(g);
+                    });
+
+                    // Seed UI & capture initial state
+                    seedPickers();
+                    ['A', 'B', 'C', 'D', 'E', 'F'].forEach(g => {
+                        initialState.originals[g] = ORIGINAL[g];
+                        initialState.applied[g] = APPLIED[g];
+                        initialState.dists[g] = document.getElementById('dist' + g).value;
+                    });
+                    initialState.theme = (document.documentElement.getAttribute('data-theme') || 'dark');
+                    initialState.collapsed = false;
+
+                    refreshMini();
+                    finishLoading();
+                } catch (e) {
+                    failLoadingFallback(e);
+                }
+            })();
+
+            // ===== Resize & render loop =====
+            window.addEventListener('resize', () => {
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                if (model) frameModel(MODEL_FILL);
+            });
+            (function animate() { requestAnimationFrame(animate); controls.update(); renderer.render(scene, camera); })();
+
+            // Dev helpers
+            window.setFill = v => { MODEL_FILL = v; if (model) frameModel(MODEL_FILL); };
+            window.listAllMeshNames = () => { const names = new Set(); scene.traverse(o => { if (o.isMesh) names.add(o.name); }); console.table([...names].sort()); };
+        }
     </script>
 </body>
 
